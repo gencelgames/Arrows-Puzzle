@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Arrow Puzzle</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#1e1e1e;--fg:#fff;--accent:#1fb6ff;--red:#ff2d55;--panel:#2c2c2e;--mut:#8e8e93;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-user-select:none;user-select:none;touch-action:manipulation;overflow:hidden}
+.screen{display:none;height:100%;flex-direction:column;align-items:center}
+.screen.on{display:flex}
+h1{color:var(--accent);margin:18px 0 4px;font-size:28px}
+.sub{color:var(--mut);margin:0 0 12px;font-size:14px}
+#grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;width:100%;max-width:420px;padding:6px 16px 20px;overflow-y:auto;flex:1}
+.lv{aspect-ratio:1;border:2px solid #fff;background:transparent;color:#fff;border-radius:12px;font-size:18px;font-weight:700;cursor:pointer}
+.lv.done{background:#fff;color:#1e1e1e}
+.lv.cur{border-color:var(--accent);color:var(--accent)}
+.lv:disabled{opacity:.25;cursor:default}
+.btn{background:var(--accent);color:#04121a;border:0;border-radius:12px;padding:12px 22px;font-size:16px;font-weight:700;cursor:pointer}
+.btn.ghost{background:var(--panel);color:#fff}
+#foot{padding:10px 16px 14px}
+#top{width:100%;max-width:640px;display:flex;align-items:center;justify-content:space-between;padding:10px 12px 0}
+.ib{width:42px;height:42px;border-radius:50%;border:0;background:#fff;color:#1e1e1e;font-size:20px;cursor:pointer}
+#mid{text-align:center}
+#lvl{color:var(--accent);font-size:22px;font-weight:700}
+#hearts{font-size:22px;letter-spacing:4px;color:var(--red)}
+#hearts .x{opacity:.2}
+#stage{flex:1;display:flex;align-items:center;justify-content:center;width:100%}
+canvas{touch-action:manipulation;cursor:pointer}
+#bar{display:flex;gap:10px;padding:0 0 18px}
+#ov{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px}
+#ov.on{display:flex}
+#ov h2{margin:0;font-size:30px}
+#ov p{margin:0;color:var(--mut)}
+</style>
+</head>
+<body>
+
+<div id="menu" class="screen on">
+  <h1>Arrow Puzzle</h1>
+  <p class="sub">Tap arrows to slide them out. Blocked arrows cost a heart.</p>
+  <div id="grid"></div>
+  <div id="foot"><button class="btn ghost" id="dlBtn">⬇ Download game</button></div>
+</div>
+
+<div id="game" class="screen">
+  <div id="top">
+    <button class="ib" id="back" aria-label="Menu">☰</button>
+    <div id="mid"><div id="lvl">Level 1</div><div id="hearts"></div></div>
+    <button class="ib" id="snd" aria-label="Sound">🔊</button>
+  </div>
+  <div id="stage"><canvas id="cv"></canvas></div>
+  <div id="bar">
+    <button class="btn ghost" id="hint">💡 Hint</button>
+    <button class="btn ghost" id="restart">↻ Restart</button>
+  </div>
+</div>
+
+<div id="ov"><h2 id="ovT"></h2><p id="ovP"></p><div style="display:flex;gap:10px"><button class="btn ghost" id="ovMenu">Menu</button><button class="btn" id="ovGo"></button></div></div>
+
+<script>
+(function(){
+var $=function(i){return document.getElementById(i)};
+var TOTAL=100;
+var save={unlocked:1,sound:true};
+try{var s=localStorage.getItem("arrowPuzzleSave");if(s)save=Object.assign(save,JSON.parse(s))}catch(e){}
+function persist(){try{localStorage.setItem("arrowPuzzleSave",JSON.stringify(save))}catch(e){}}
+
+/* ---------- level generation ---------- */
+var DIRS=[[1,0],[0,1],[-1,0],[0,-1]];
+function rng(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function blockedBy(a,occ,n){
+  var h=a.path[a.path.length-1],d=DIRS[a.dir],x=h[0]+d[0],y=h[1]+d[1];
+  while(x>=0&&y>=0&&x<n&&y<n){if(occ[y][x]!==-1&&occ[y][x]!==a.id)return true;x+=d[0];y+=d[1]}
+  return false;
+}
+function makeOcc(arrows,n){
+  var o=[];for(var y=0;y<n;y++){o.push(new Array(n).fill(-1))}
+  arrows.forEach(function(a){if(a.state==="idle")a.path.forEach(function(p){o[p[1]][p[0]]=a.id})});
+  return o;
+}
+function build(n,maxLen,target,r){
+  var g=[];for(var y=0;y<n;y++)g.push(new Array(n).fill(-1));
+  var arrows=[],cells=[];
+  for(var y2=0;y2<n;y2++)for(var x2=0;x2<n;x2++)cells.push([x2,y2]);
+  for(var i=cells.length-1;i>0;i--){var j=Math.floor(r()*(i+1));var t=cells[i];cells[i]=cells[j];cells[j]=t}
+  cells.forEach(function(c){
+    if(g[c[1]][c[0]]!==-1)return;
+    var id=arrows.length,L=2+Math.floor(r()*(maxLen-1)),path=[c],last=-1;
+    g[c[1]][c[0]]=id;
+    while(path.length<L){
+      var cur=path[path.length-1],opts=[];
+      for(var d=0;d<4;d++){var nx=cur[0]+DIRS[d][0],ny=cur[1]+DIRS[d][1];
+        if(nx>=0&&ny>=0&&nx<n&&ny<n&&g[ny][nx]===-1)opts.push(d)}
+      if(!opts.length)break;
+      var dd=(last>=0&&opts.indexOf(last)>=0&&r()<0.55)?last:opts[Math.floor(r()*opts.length)];
+      var px=cur[0]+DIRS[dd][0],py=cur[1]+DIRS[dd][1];
+      g[py][px]=id;path.push([px,py]);last=dd;
+    }
+    if(path.length<2){g[c[1]][c[0]]=-1;return}
+    arrows.push({id:id,path:path,dir:last,state:"idle"});
+  });
+  /* keep only arrows that can actually be cleared, in some order */
+  var kept=[],left=arrows.slice(),progress=true;
+  while(progress&&left.length){
+    progress=false;
+    var occ=makeOcc(left,n);
+    for(var k=0;k<left.length;k++){
+      if(!blockedBy(left[k],occ,n)){kept.push(left[k]);left.splice(k,1);progress=true;break}
+    }
+  }
+  while(kept.length>target){kept.splice(Math.floor(r()*kept.length),1)}
+  return kept;
+}
+function genLevel(level){
+  var n=4+Math.round(level*8/100);
+  var maxLen=Math.min(10,3+Math.floor(level/10));
+  var target=Math.min(n*n,3+Math.floor(level*1.4));
+  var best=null;
+  for(var at=0;at<10;at++){
+    var r=rng(level*7919+at*104729);
+    var a=build(n,maxLen,target,r);
+    if(!best||a.length>best.length)best=a;
+    if(a.length>=target)break;
+  }
+  best.forEach(function(a,i){a.id=i});
+  return {n:n,arrows:best};
+}
+
+/* ---------- sound ---------- */
+var ac=null;
+function beep(f,d,type){
+  if(!save.sound)return;
+  try{
+    ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+    var o=ac.createOscillator(),g=ac.createGain();
+    o.type=type||"sine";o.frequency.value=f;g.gain.value=0.08;
+    o.connect(g);g.connect(ac.destination);o.start();
+    g.gain.exponentialRampToValueAtTime(0.0001,ac.currentTime+d);o.stop(ac.currentTime+d);
+  }catch(e){}
+}
+
+/* ---------- game state ---------- */
+var cv=$("cv"),ctx=cv.getContext("2d");
+var level=1,n=4,arrows=[],lives=3,over=false,S=300,dpr=1;
+var shakeUntil=0,hintId=-1,hintUntil=0;
+
+function showScreen(id){["menu","game"].forEach(function(s){$(s).classList.toggle("on",s===id)})}
+function renderHearts(){
+  var h="";for(var i=0;i<3;i++)h+='<span class="'+(i<lives?"":"x")+'">♥</span>';
+  $("hearts").innerHTML=h;
+}
+function buildMenu(){
+  var g=$("grid");g.innerHTML="";
+  for(var i=1;i<=TOTAL;i++){
+    var b=document.createElement("button");
+    b.className="lv"+(i<save.unlocked?" done":i===save.unlocked?" cur":"");
+    b.textContent=i;b.disabled=i>save.unlocked;
+    (function(L){b.onclick=function(){startLevel(L)}})(i);
+    g.appendChild(b);
+  }
+}
+function startLevel(L){
+  level=L;var d=genLevel(L);n=d.n;arrows=d.arrows;lives=3;over=false;hintId=-1;
+  $("lvl").textContent="Level "+L;renderHearts();
+  $("ov").classList.remove("on");showScreen("game");resize();
+}
+function resize(){
+  dpr=window.devicePixelRatio||1;
+  var w=window.innerWidth-24,h=window.innerHeight-190;
+  S=Math.max(200,Math.min(w,h,640));
+  cv.style.width=S+"px";cv.style.height=S+"px";
+  cv.width=Math.round(S*dpr);cv.height=Math.round(S*dpr);
+}
+window.addEventListener("resize",resize);
+
+function distSeg(px,py,ax,ay,bx,by){
+  var dx=bx-ax,dy=by-ay,l=dx*dx+dy*dy,t=l?((px-ax)*dx+(py-ay)*dy)/l:0;
+  t=Math.max(0,Math.min(1,t));
+  var cx=ax+t*dx,cy=ay+t*dy;return Math.hypot(px-cx,py-cy);
+}
+function pick(px,py){
+  var best=null,bd=0.5;
+  arrows.forEach(function(a){
+    if(a.state!=="idle")return;
+    for(var i=0;i<a.path.length-1;i++){
+      var d=distSeg(px,py,a.path[i][0]+.5,a.path[i][1]+.5,a.path[i+1][0]+.5,a.path[i+1][1]+.5);
+      if(d<bd){bd=d;best=a}
+    }
+  });
+  return best;
+}
+function onTap(e){
+  if(over)return;
+  var r=cv.getBoundingClientRect(),c=S/n;
+  var a=pick((e.clientX-r.left)/c,(e.clientY-r.top)/c);
+  if(!a)return;
+  var now=performance.now();
+  if(blockedBy(a,makeOcc(arrows,n),n)){
+    lives--;a.flash=now+450;shakeUntil=now+300;renderHearts();beep(150,0.25,"sawtooth");
+    if(navigator.vibrate)try{navigator.vibrate(60)}catch(x){}
+    if(lives<=0){over=true;setTimeout(function(){
+      showOv("Out of hearts","Level "+level+" was too tough this time.","Try again",function(){startLevel(level)})},500)}
+  }else{
+    a.state="moving";a.t0=now;hintId=-1;beep(520+Math.random()*120,0.12);
+  }
+}
+cv.addEventListener("pointerdown",onTap);
+
+function showOv(t,p,btn,fn){
+  $("ovT").textContent=t;$("ovP").textContent=p;$("ovGo").textContent=btn;$("ovGo").onclick=fn;
+  $("ov").classList.add("on");
+}
+function checkWin(){
+  if(over)return;
+  if(arrows.every(function(a){return a.state==="gone"})){
+    over=true;beep(784,0.3);
+    if(level>=save.unlocked&&level<TOTAL){save.unlocked=level+1;persist()}
+    else if(level===TOTAL&&save.unlocked<=TOTAL){save.unlocked=TOTAL+1;persist()}
+    setTimeout(function(){
+      if(level>=TOTAL)showOv("You did it!","All 100 levels are cleared.","Play again",function(){startLevel(1)});
+      else showOv("Level complete!","Nice work. Ready for level "+(level+1)+"?","Next level",function(){startLevel(level+1)});
+    },350);
+  }
+}
+
+/* ---------- drawing ---------- */
+function draw(t){
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,S,S);
+  if($("game").classList.contains("on")){
+    var c=S/n;
+    if(t<shakeUntil)ctx.translate((Math.random()-.5)*6,0);
+    ctx.lineCap="round";ctx.lineJoin="round";ctx.lineWidth=Math.max(2,c*0.11);
+    var moved=false;
+    arrows.forEach(function(a){
+      if(a.state==="gone")return;
+      var off=0,alpha=1;
+      if(a.state==="moving"){
+        var e=(t-a.t0)/1000;off=8*e+45*e*e;
+        var lim=n+a.path.length+2;
+        if(off>lim){a.state="gone";moved=true;return}
+        alpha=Math.max(0,1-off/lim*0.6);
+      }
+      var col="#fff";
+      if(a.flash&&t<a.flash)col="#ff2d55";
+      else if(a.id===hintId&&t<hintUntil&&Math.floor(t/250)%2===0)col="#1fb6ff";
+      ctx.globalAlpha=alpha;ctx.strokeStyle=col;ctx.fillStyle=col;
+      var d=DIRS[a.dir];
+      ctx.beginPath();
+      a.path.forEach(function(p,i){
+        var x=(p[0]+.5+d[0]*off)*c,y=(p[1]+.5+d[1]*off)*c;
+        if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y);
+      });
+      ctx.stroke();
+      var h=a.path[a.path.length-1],hx=(h[0]+.5+d[0]*off)*c,hy=(h[1]+.5+d[1]*off)*c;
+      var px=-d[1],py=d[0],w=c*0.26;
+      ctx.beginPath();
+      ctx.moveTo(hx+d[0]*c*0.5,hy+d[1]*c*0.5);
+      ctx.lineTo(hx+px*w,hy+py*w);ctx.lineTo(hx-px*w,hy-py*w);
+      ctx.closePath();ctx.fill();
+      ctx.globalAlpha=1;
+    });
+    if(moved)checkWin();
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+/* ---------- buttons ---------- */
+$("back").onclick=function(){buildMenu();showScreen("menu")};
+$("ovMenu").onclick=function(){$("ov").classList.remove("on");buildMenu();showScreen("menu")};
+$("restart").onclick=function(){startLevel(level)};
+$("hint").onclick=function(){
+  if(over)return;
+  var occ=makeOcc(arrows,n),free=arrows.filter(function(a){return a.state==="idle"&&!blockedBy(a,occ,n)});
+  if(free.length){hintId=free[0].id;hintUntil=performance.now()+2000}
+};
+function syncSnd(){$("snd").textContent=save.sound?"🔊":"🔇"}
+$("snd").onclick=function(){save.sound=!save.sound;persist();syncSnd()};
+syncSnd();
+
+$("dlBtn").onclick=async function(){
+  var html="<!DOCTYPE html>\n"+document.documentElement.outerHTML;
+  try{
+    var dl=(window.claude&&window.claude.use)?await window.claude.use("downloads"):null;
+    if(dl){await dl.save({filename:"arrow-puzzle.html",data:html});return}
+  }catch(e){if(e&&e.code==="declined")return}
+  try{
+    var a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([html],{type:"text/html"}));
+    a.download="arrow-puzzle.html";document.body.appendChild(a);a.click();a.remove();
+  }catch(e){}
+};
+
+buildMenu();
+})();
+</script>
+</body>
+</html>
